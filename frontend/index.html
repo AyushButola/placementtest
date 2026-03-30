@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Notes App - Developer Edition</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-main: #0f0f0f;
+    --bg-panel: #1a1a1a;
+    --text-main: #e8e8e8;
+    --text-muted: #888888;
+    --accent: #f5a623;
+    --border: #2a2a2a;
+    --error: #ff4a4a;
+  }
+  * { box-sizing: border-box; font-family: 'IBM Plex Mono', monospace; margin: 0; padding: 0; }
+  body { background-color: var(--bg-main); color: var(--text-main); height: 100vh; display: flex; overflow: hidden; }
+  
+  .layout { display: flex; width: 100%; height: 100%; }
+  .panel { background-color: var(--bg-panel); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; }
+  
+  /* Panel 1 */
+  #panel-sidebar { width: 300px; flex-shrink: 0; }
+  .sidebar-header { padding: 1rem; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--bg-panel); z-index: 10; }
+  #search-input { width: 100%; padding: 0.5rem; background: var(--bg-main); border: 1px solid var(--border); color: var(--text-main); margin-bottom: 1rem; outline: none; transition: all 0.15s ease; }
+  #search-input:focus { border-color: var(--accent); }
+  
+  .btn { display: inline-block; padding: 0.5rem 1rem; background: transparent; border: 1px solid var(--border); color: var(--text-main); cursor: pointer; transition: all 0.15s ease; text-align: center; font-size: 0.9rem; }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-full { width: 100%; }
+  
+  #note-list { display: flex; flex-direction: column; }
+  .note-item { padding: 1rem; cursor: pointer; border-left: 3px solid transparent; border-bottom: 1px solid var(--border); transition: all 0.15s ease; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; }
+  .note-item:hover { background-color: #222; }
+  .note-item.active { border-left-color: var(--accent); background-color: #222; color: var(--accent); }
+  
+  /* Panel 2 */
+  #panel-main { flex-grow: 1; padding: 2rem; }
+  .main-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 1rem; height: 60px; }
+  #note-title-display { font-size: 1.5rem; font-weight: 500; flex-grow: 1; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+  
+  .toolbar { display: flex; gap: 0.5rem; align-items: center; }
+  .feedback { font-size: 0.8rem; padding: 0.4rem 0.6rem; display: none; margin-right: 0.5rem; }
+  .feedback.error { color: var(--error); border: 1px solid var(--error); display: block; }
+  .feedback.success { color: var(--accent); border: 1px solid var(--accent); display: block; }
+  
+  #note-content, #note-content-create { width: 100%; flex-grow: 1; background: transparent; border: none; border-bottom: 1px solid transparent; color: var(--text-main); outline: none; resize: none; line-height: 1.6; font-size: 1rem; transition: all 0.15s ease; }
+  #note-content:focus, #note-content-create:focus { border-bottom-color: var(--border); }
+  #note-content:disabled { color: var(--text-muted); }
+  
+  /* Create state */
+  #create-form { display: none; flex-direction: column; height: 100%; }
+  #create-title { font-size: 1.5rem; background: transparent; border: none; border-bottom: 1px solid var(--border); color: var(--text-main); margin-bottom: 1rem; padding-bottom: 0.5rem; outline: none; transition: all 0.15s ease; width: 100%; }
+  #create-title:focus { border-bottom-color: var(--accent); }
+  
+  /* Panel 3 */
+  #panel-info { width: 250px; flex-shrink: 0; border-right: none; padding: 2rem 1rem; }
+  .info-block { margin-bottom: 1.5rem; }
+  .info-label { color: var(--text-muted); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 0.3rem; }
+  .info-val { font-size: 1.1rem; }
+  
+  /* Banner */
+  #banner { position: fixed; top: 0; left: 0; width: 100%; background: var(--error); color: white; text-align: center; padding: 0.5rem; z-index: 100; display: none; font-weight: 600; cursor: pointer; }
+  
+  @media (max-width: 768px) {
+    .layout { flex-direction: column; }
+    #panel-sidebar { width: 100%; height: 35vh; border-right: none; border-bottom: 1px solid var(--border); }
+    #panel-info { display: none; }
+    #panel-main { height: 65vh; padding: 1rem; }
+  }
+</style>
+</head>
+<body>
+<div id="banner" onclick="this.style.display='none'">Could not reach the server. Is it running?</div>
+
+<div class="layout">
+  <!-- Panel 1 -->
+  <div id="panel-sidebar" class="panel">
+    <div class="sidebar-header">
+      <input type="text" id="search-input" placeholder="Search notes...">
+      <button class="btn btn-full" id="btn-new-note">+ New Note</button>
+    </div>
+    <div id="note-list"></div>
+  </div>
+  
+  <!-- Panel 2 -->
+  <div id="panel-main" class="panel">
+    <!-- View/Edit State -->
+    <div id="view-state" style="display: flex; flex-direction: column; height: 100%;">
+      <div class="main-header">
+        <div id="note-title-display">Select a Note</div>
+        <div class="toolbar" id="view-toolbar" style="display: none;">
+          <span id="view-feedback" class="feedback"></span>
+          <button class="btn" id="btn-undo">Undo</button>
+          <button class="btn" id="btn-redo">Redo</button>
+          <button class="btn" id="btn-save" style="border-color: var(--accent); color: var(--accent);">Save</button>
+        </div>
+      </div>
+      <textarea id="note-content" placeholder="Content will appear here..." disabled></textarea>
+    </div>
+    
+    <!-- Create State -->
+    <div id="create-state" style="display: none; flex-direction: column; height: 100%;">
+      <div class="main-header">
+        <div style="font-size: 1.5rem; font-weight: 500;">Create New Note</div>
+        <div class="toolbar">
+          <span id="create-feedback" class="feedback"></span>
+          <button class="btn" id="btn-create" style="border-color: var(--accent); color: var(--accent);">Create</button>
+        </div>
+      </div>
+      <input type="text" id="create-title" placeholder="Note Title">
+      <textarea id="note-content-create" placeholder="Content..."></textarea>
+    </div>
+  </div>
+  
+  <!-- Panel 3 -->
+  <div id="panel-info" class="panel">
+    <div id="info-content" style="display: none;">
+      <div class="info-block">
+        <div class="info-label">Title</div>
+        <div class="info-val" id="info-title"></div>
+      </div>
+      <div class="info-block">
+        <div class="info-label">Characters</div>
+        <div class="info-val" id="info-chars">0</div>
+      </div>
+      <div class="info-block">
+        <div class="info-label">Words</div>
+        <div class="info-val" id="info-words">0</div>
+      </div>
+    </div>
+    <div id="info-placeholder" style="color: var(--text-muted); font-size: 0.9rem;">
+      Select a note to view its metadata.
+    </div>
+  </div>
+</div>
+
+<script>
+const API_BASE = "http://127.0.0.1:5000";
+let currentTitle = null;
+let searchTimeout = null;
+
+// DOM Elements
+const els = {
+  banner: document.getElementById('banner'),
+  noteList: document.getElementById('note-list'),
+  searchInput: document.getElementById('search-input'),
+  btnNewNote: document.getElementById('btn-new-note'),
+  
+  viewState: document.getElementById('view-state'),
+  createState: document.getElementById('create-state'),
+  
+  noteTitleDisplay: document.getElementById('note-title-display'),
+  noteContent: document.getElementById('note-content'),
+  viewToolbar: document.getElementById('view-toolbar'),
+  btnUndo: document.getElementById('btn-undo'),
+  btnRedo: document.getElementById('btn-redo'),
+  btnSave: document.getElementById('btn-save'),
+  viewFeedback: document.getElementById('view-feedback'),
+  
+  createTitle: document.getElementById('create-title'),
+  noteContentCreate: document.getElementById('note-content-create'),
+  btnCreate: document.getElementById('btn-create'),
+  createFeedback: document.getElementById('create-feedback'),
+  
+  infoContent: document.getElementById('info-content'),
+  infoPlaceholder: document.getElementById('info-placeholder'),
+  infoTitle: document.getElementById('info-title'),
+  infoChars: document.getElementById('info-chars'),
+  infoWords: document.getElementById('info-words')
+};
+
+// Error Handling Helper
+function showFeedback(el, message, type="error") {
+  el.textContent = message;
+  el.className = `feedback ${type}`;
+  setTimeout(() => { el.style.display = 'none'; el.className = 'feedback'; }, 4000);
+}
+
+function showBanner() {
+  els.banner.style.display = 'block';
+}
+
+// ----------------------------------------------------
+// Exact Requested Functions
+// ----------------------------------------------------
+
+async function fetchAllNotes() {
+  try {
+    const res = await fetch(`${API_BASE}/notes`);
+    if (!res.ok) throw new Error("API Error");
+    const data = await res.json();
+    renderTitles(data.map(n => n.title));
+  } catch (err) {
+    showBanner();
+  }
+}
+
+async function loadNote(title) {
+  try {
+    const res = await fetch(`${API_BASE}/notes/${encodeURIComponent(title)}`);
+    if (!res.ok) {
+        showBanner();
+        return;
+    }
+    const data = await res.json();
+    
+    currentTitle = data.title;
+    
+    // Switch to view/edit state
+    els.viewState.style.display = 'flex';
+    els.createState.style.display = 'none';
+    els.viewToolbar.style.display = 'flex';
+    
+    // Populate Data
+    els.noteTitleDisplay.textContent = currentTitle;
+    els.noteContent.value = data.content;
+    els.noteContent.disabled = false;
+    
+    // Update active class
+    updateActiveSidebarItem();
+    
+    // Prepare info panel
+    els.infoPlaceholder.style.display = 'none';
+    els.infoContent.style.display = 'block';
+    els.infoTitle.textContent = currentTitle;
+    updateInfoBar();
+    
+  } catch (err) {
+    showBanner();
+  }
+}
+
+async function saveNote() {
+  if (!currentTitle) return;
+  const content = els.noteContent.value;
+  try {
+    const res = await fetch(`${API_BASE}/notes/${encodeURIComponent(currentTitle)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showFeedback(els.viewFeedback, data.error || "Save Failed", "error");
+    } else {
+      showFeedback(els.viewFeedback, "Saved!", "success");
+      await loadNote(currentTitle); // Refresh content
+    }
+  } catch (err) {
+    showBanner();
+  }
+}
+
+async function undoNote() {
+  if (!currentTitle) return;
+  try {
+    const res = await fetch(`${API_BASE}/notes/${encodeURIComponent(currentTitle)}/undo`, {
+      method: 'POST'
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showFeedback(els.viewFeedback, data.error || "Nothing to undo", "error");
+    } else {
+      els.noteContent.value = data.content;
+      updateInfoBar();
+    }
+  } catch(err) {
+    showBanner();
+  }
+}
+
+async function redoNote() {
+  if (!currentTitle) return;
+  try {
+    const res = await fetch(`${API_BASE}/notes/${encodeURIComponent(currentTitle)}/redo`, {
+      method: 'POST'
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      showFeedback(els.viewFeedback, data.error || "Nothing to redo", "error");
+    } else {
+      els.noteContent.value = data.content;
+      updateInfoBar();
+    }
+  } catch(err) {
+    showBanner();
+  }
+}
+
+async function createNote() {
+  const title = els.createTitle.value.trim();
+  const content = els.noteContentCreate.value;
+  if(!title || !content) {
+    showFeedback(els.createFeedback, "Title and content required", "error");
+    return;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/notes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, content })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      // Handles 400 and 409
+      showFeedback(els.createFeedback, data.error || "Creation failed", "error");
+    } else {
+      els.createTitle.value = '';
+      els.noteContentCreate.value = '';
+      await fetchAllNotes();
+      await loadNote(title);
+    }
+  } catch (err) {
+    showBanner();
+  }
+}
+
+async function searchNotes(query) {
+  if (query.trim() === "") {
+    fetchAllNotes();
+    return;
+  }
+  try {
+    const res = await fetch(`${API_BASE}/notes/search/content?query=${encodeURIComponent(query)}`);
+    if(!res.ok) {
+        showBanner();
+        return;
+    }
+    const data = await res.json();
+    renderTitles(data.results);
+  } catch(err) {
+    showBanner();
+  }
+}
+
+function updateInfoBar() {
+  const val = els.noteContent.value;
+  els.infoChars.textContent = val.length;
+  // Match words using regex, filter out empty strings
+  const words = val.trim().split(/\s+/).filter(w => w.length > 0);
+  els.infoWords.textContent = words.length;
+}
+
+// ----------------------------------------------------
+// UI Subroutines
+// ----------------------------------------------------
+
+function renderTitles(titles) {
+  els.noteList.innerHTML = '';
+  titles.forEach(t => {
+    const div = document.createElement('div');
+    div.className = 'note-item';
+    if(currentTitle === t) div.classList.add('active');
+    div.textContent = t;
+    div.onclick = () => loadNote(t);
+    els.noteList.appendChild(div);
+  });
+}
+
+function updateActiveSidebarItem() {
+  Array.from(els.noteList.children).forEach(el => {
+    if(el.textContent === currentTitle) el.classList.add('active');
+    else el.classList.remove('active');
+  });
+}
+
+function showCreateForm() {
+    currentTitle = null;
+    updateActiveSidebarItem();
+    els.viewState.style.display = 'none';
+    els.createState.style.display = 'flex';
+    els.infoContent.style.display = 'none';
+    els.infoPlaceholder.style.display = 'block';
+}
+
+// ----------------------------------------------------
+// Event Listeners
+// ----------------------------------------------------
+
+els.btnNewNote.addEventListener('click', showCreateForm);
+els.btnSave.addEventListener('click', saveNote);
+els.btnUndo.addEventListener('click', undoNote);
+els.btnRedo.addEventListener('click', redoNote);
+els.btnCreate.addEventListener('click', createNote);
+
+els.noteContent.addEventListener('input', updateInfoBar);
+
+els.searchInput.addEventListener('input', (e) => {
+  clearTimeout(searchTimeout);
+  searchTimeout = setTimeout(() => {
+    searchNotes(e.target.value);
+  }, 300); // 300ms debounce
+});
+
+// Initialization
+fetchAllNotes();
+</script>
+</body>
+</html>
