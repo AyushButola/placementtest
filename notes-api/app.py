@@ -1,18 +1,24 @@
 from flask import Flask
-from routes.notes import notes_bp, notes_store as bp_store
+from flask_cors import CORS
+from database import db
+from routes.notes import notes_bp
+
 
 def create_app():
     app = Flask(__name__)
 
-    # Register blueprint
+    # SQLite config — creates notes.db in the project root
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///notes.db"
+    app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+    CORS(app)
+    db.init_app(app)
+
     app.register_blueprint(notes_bp)
 
-    @app.after_request
-    def after_request(response):
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-        response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-        return response
+    # Create tables on first run if they don't exist
+    with app.app_context():
+        db.create_all()
 
     return app
 

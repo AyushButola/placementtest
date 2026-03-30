@@ -1,35 +1,68 @@
-class Note:
-    def __init__(self, title: str, content: str):
-        self.title = title
-        self.content = content
-        self.undo_stack: list[str] = []
-        self.redo_stack: list[str] = []
+from database import db
+
+
+class Note(db.Model):
+    __tablename__ = "notes"
+
+    title = db.Column(db.String, primary_key=True)
+    content = db.Column(db.Text, nullable=False)
+    current_version = db.Column(db.Integer, default=0)
+
+    history = db.relationship(
+        "NoteHistory",
+        backref="note",
+        cascade="all, delete-orphan",
+        order_by="NoteHistory.version"
+    )
 
     def change_content(self, new_content: str):
-        self.undo_stack.append(self.content)
+        # Delete all history rows with version > current_version (clears redo)
+        NoteHistory.query.filter(
+            NoteHistory.note_title == self.title,
+            NoteHistory.version > self.current_version
+        ).delete()
+
+        # Increment version and save new history row
+        self.current_version += 1
+        history_entry = NoteHistory(
+            note_title=self.title,
+            content=new_content,
+            version=self.current_version
+        )
+        db.session.add(history_entry)
         self.content = new_content
-        self.redo_stack.clear()
 
     def undo(self) -> dict:
-        if not self.undo_stack:
+        if self.current_version <= 1:
             return {"success": False, "message": "Nothing to undo"}
-        self.redo_stack.append(self.content)
-        self.content = self.undo_stack.pop()
+
+        self.current_version -= 1
+        target = NoteHistory.query.filter_by(
+            note_title=self.title,
+            version=self.current_version
+        ).first()
+        self.content = target.content
         return {"success": True, "content": self.content}
 
     def redo(self) -> dict:
-        if not self.redo_stack:
+        max_version = db.session.query(
+            db.func.max(NoteHistory.version)
+        ).filter_by(note_title=self.title).scalar()
+
+        if max_version is None or self.current_version >= max_version:
             return {"success": False, "message": "Nothing to redo"}
-        self.undo_stack.append(self.content)
-        self.content = self.redo_stack.pop()
+
+        self.current_version += 1
+        target = NoteHistory.query.filter_by(
+            note_title=self.title,
+            version=self.current_version
+        ).first()
+        self.content = target.content
         return {"success": True, "content": self.content}
 
     def matches_query(self, query: str) -> bool:
         query = query.lower().strip()
-        content_lower = self.content.lower()
-        words = content_lower.split()
-        # Check each word for partial or full match
-        # Note: using split() fixes the C++ bug where the last word was skipped
+        words = self.content.lower().split()
         for word in words:
             if query in word:
                 return True
@@ -37,3 +70,12 @@ class Note:
 
     def to_dict(self) -> dict:
         return {"title": self.title, "content": self.content}
+
+
+class NoteHistory(db.Model):
+    __tablename__ = "note_history"
+
+    id = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    note_title = db.Column(db.String, db.ForeignKey("notes.title"), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    version = db.Column(db.Integer, nullable=False)

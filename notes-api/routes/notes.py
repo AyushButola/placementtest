@@ -1,9 +1,8 @@
 from flask import Blueprint, request, jsonify
+from database import db
+from models.note import Note, NoteHistory
 
 notes_bp = Blueprint("notes", __name__)
-
-# This will be set by app.py after blueprint registration
-notes_store: dict = {}
 
 
 # ---------------------------------------------------------------
@@ -23,11 +22,18 @@ def create_note():
         return jsonify({"error": "Title cannot be empty"}), 400
     if not content:
         return jsonify({"error": "Content cannot be empty"}), 400
-    if title in notes_store:
+
+    if Note.query.get(title):
         return jsonify({"error": f"Note with title '{title}' already exists"}), 409
 
-    from models.note import Note
-    notes_store[title] = Note(title, content)
+    note = Note(title=title, content=content, current_version=1)
+    db.session.add(note)
+
+    # Save initial version to history
+    history_entry = NoteHistory(note_title=title, content=content, version=1)
+    db.session.add(history_entry)
+
+    db.session.commit()
     return jsonify({"message": "Note created", "title": title}), 201
 
 
@@ -36,13 +42,13 @@ def create_note():
 # ---------------------------------------------------------------
 @notes_bp.route("/notes", methods=["GET"])
 def get_all_notes():
-    return jsonify([note.to_dict() for note in notes_store.values()]), 200
+    notes = Note.query.all()
+    return jsonify([note.to_dict() for note in notes]), 200
 
 
 # ---------------------------------------------------------------
-# GET /notes/search/content?query=<query> — Search notes by content
-# IMPORTANT: This route must be defined BEFORE GET /notes/<title>
-# so Flask does not treat "search" as a title parameter.
+# GET /notes/search/content?query=<query>
+# IMPORTANT: Must be defined BEFORE GET /notes/<title>
 # ---------------------------------------------------------------
 @notes_bp.route("/notes/search/content", methods=["GET"])
 def search_notes():
@@ -52,19 +58,19 @@ def search_notes():
         return jsonify({"error": "Query parameter cannot be empty"}), 400
 
     matched_titles = [
-        title
-        for title, note in notes_store.items()
+        note.title
+        for note in Note.query.all()
         if note.matches_query(query)
     ]
     return jsonify({"query": query, "results": matched_titles}), 200
 
 
 # ---------------------------------------------------------------
-# GET /notes/<title> — Get a specific note by title
+# GET /notes/<title> — Get a specific note
 # ---------------------------------------------------------------
 @notes_bp.route("/notes/<string:title>", methods=["GET"])
 def get_note(title):
-    note = notes_store.get(title)
+    note = Note.query.get(title)
     if not note:
         return jsonify({"error": f"Note '{title}' not found"}), 404
     return jsonify(note.to_dict()), 200
@@ -75,7 +81,7 @@ def get_note(title):
 # ---------------------------------------------------------------
 @notes_bp.route("/notes/<string:title>", methods=["PUT"])
 def update_note(title):
-    note = notes_store.get(title)
+    note = Note.query.get(title)
     if not note:
         return jsonify({"error": f"Note '{title}' not found"}), 404
 
@@ -88,34 +94,39 @@ def update_note(title):
         return jsonify({"error": "Content cannot be empty"}), 400
 
     note.change_content(new_content)
+    db.session.commit()
     return jsonify({"message": "Note updated", "title": title}), 200
 
 
 # ---------------------------------------------------------------
-# POST /notes/<title>/undo — Undo last content change
+# POST /notes/<title>/undo
 # ---------------------------------------------------------------
 @notes_bp.route("/notes/<string:title>/undo", methods=["POST"])
 def undo_note(title):
-    note = notes_store.get(title)
+    note = Note.query.get(title)
     if not note:
         return jsonify({"error": f"Note '{title}' not found"}), 404
 
     result = note.undo()
     if not result["success"]:
         return jsonify({"error": result["message"]}), 400
+
+    db.session.commit()
     return jsonify({"message": "Undo successful", "content": result["content"]}), 200
 
 
 # ---------------------------------------------------------------
-# POST /notes/<title>/redo — Redo last undone change
+# POST /notes/<title>/redo
 # ---------------------------------------------------------------
 @notes_bp.route("/notes/<string:title>/redo", methods=["POST"])
 def redo_note(title):
-    note = notes_store.get(title)
+    note = Note.query.get(title)
     if not note:
         return jsonify({"error": f"Note '{title}' not found"}), 404
 
     result = note.redo()
     if not result["success"]:
         return jsonify({"error": result["message"]}), 400
+
+    db.session.commit()
     return jsonify({"message": "Redo successful", "content": result["content"]}), 200
